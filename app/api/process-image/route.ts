@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
       break
   }
 
-  return new NextResponse(output, {
+  return new NextResponse(new Uint8Array(output), {
     headers: {
       "Content-Type": mimeType,
       "Content-Disposition": `attachment; filename="processed.${format}"`,
