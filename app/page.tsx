@@ -1,18 +1,271 @@
+"use client"
+
+import { useRef, useState, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 
+type OutputFormat = "jpeg" | "png" | "webp" | "avif"
+
+interface ImageInfo {
+  name: string
+  size: number
+  previewUrl: string
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
+}
+
 export default function Page() {
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [file, setFile] = useState<File | null>(null)
+  const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null)
+  const [width, setWidth] = useState("")
+  const [height, setHeight] = useState("")
+  const [quality, setQuality] = useState(80)
+  const [format, setFormat] = useState<OutputFormat>("jpeg")
+  const [isDragging, setIsDragging] = useState(false)
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [result, setResult] = useState<{ url: string; size: number; blob: Blob } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleFile = useCallback((f: File) => {
+    setFile(f)
+    setResult(null)
+    setError(null)
+    const url = URL.createObjectURL(f)
+    setImageInfo({ name: f.name, size: f.size, previewUrl: url })
+  }, [])
+
+  const onInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    if (f) handleFile(f)
+  }
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragging(false)
+    const f = e.dataTransfer.files?.[0]
+    if (f) handleFile(f)
+  }
+
+  const onDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragging(true)
+  }
+
+  const onDragLeave = () => setIsDragging(false)
+
+  const process = async () => {
+    if (!file) return
+    setIsProcessing(true)
+    setError(null)
+    setResult(null)
+
+    try {
+      const fd = new FormData()
+      fd.append("file", file)
+      if (width) fd.append("width", width)
+      if (height) fd.append("height", height)
+      fd.append("quality", String(quality))
+      fd.append("format", format)
+
+      const res = await fetch("/api/process-image", { method: "POST", body: fd })
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}))
+        throw new Error(json.error ?? "Processing failed")
+      }
+
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      setResult({ url, size: blob.size, blob })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error")
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  const download = () => {
+    if (!result) return
+    const a = document.createElement("a")
+    a.href = result.url
+    a.download = `processed.${format}`
+    a.click()
+  }
+
+  const formats: OutputFormat[] = ["jpeg", "png", "webp", "avif"]
+
   return (
-    <div className="flex min-h-svh p-6">
-      <div className="flex max-w-md min-w-0 flex-col gap-4 text-sm leading-loose">
+    <div className="flex min-h-svh items-start justify-center p-6 pt-12">
+      <div className="flex w-full max-w-2xl flex-col gap-6">
         <div>
-          <h1 className="font-medium">Project ready!</h1>
-          <p>You may now add components and start building.</p>
-          <p>We&apos;ve already added the button component for you.</p>
-          <Button className="mt-2">Button</Button>
+          <h1 className="text-base font-medium">Image Resizer</h1>
+          <p className="text-sm text-muted-foreground">Resize and convert images using sharp</p>
         </div>
-        <div className="font-mono text-xs text-muted-foreground">
-          (Press <kbd>d</kbd> to toggle dark mode)
+
+        {/* Drop zone */}
+        <div
+          className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-10 text-sm transition-colors ${
+            isDragging
+              ? "border-primary bg-primary/5"
+              : "border-border hover:border-primary/50 hover:bg-muted/30"
+          }`}
+          onClick={() => fileInputRef.current?.click()}
+          onDrop={onDrop}
+          onDragOver={onDragOver}
+          onDragLeave={onDragLeave}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={onInputChange}
+          />
+          {imageInfo ? (
+            <div className="flex flex-col items-center gap-1 text-center">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={imageInfo.previewUrl}
+                alt="preview"
+                className="mb-2 max-h-40 max-w-full rounded-lg object-contain"
+              />
+              <span className="font-medium">{imageInfo.name}</span>
+              <span className="text-xs text-muted-foreground">{formatBytes(imageInfo.size)}</span>
+              <span className="mt-1 text-xs text-muted-foreground">Click or drop to replace</span>
+            </div>
+          ) : (
+            <>
+              <span className="font-medium">Drop image here or click to upload</span>
+              <span className="text-xs text-muted-foreground">PNG, JPG, SVG, WebP, AVIF, GIF…</span>
+            </>
+          )}
         </div>
+
+        {/* Options */}
+        <div className="flex flex-col gap-4">
+          {/* Dimensions */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Dimensions <span className="normal-case font-normal">(leave blank to keep original)</span>
+            </label>
+            <div className="flex gap-3">
+              <div className="flex flex-1 items-center gap-2 rounded-lg border border-border bg-background px-3 py-1.5 text-sm">
+                <span className="text-muted-foreground text-xs">W</span>
+                <input
+                  type="number"
+                  min={1}
+                  placeholder="auto"
+                  value={width}
+                  onChange={(e) => setWidth(e.target.value)}
+                  className="w-full bg-transparent outline-none placeholder:text-muted-foreground/50"
+                />
+                <span className="text-muted-foreground text-xs">px</span>
+              </div>
+              <div className="flex flex-1 items-center gap-2 rounded-lg border border-border bg-background px-3 py-1.5 text-sm">
+                <span className="text-muted-foreground text-xs">H</span>
+                <input
+                  type="number"
+                  min={1}
+                  placeholder="auto"
+                  value={height}
+                  onChange={(e) => setHeight(e.target.value)}
+                  className="w-full bg-transparent outline-none placeholder:text-muted-foreground/50"
+                />
+                <span className="text-muted-foreground text-xs">px</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Quality */}
+          <div className="flex flex-col gap-1.5">
+            <label className="flex items-center justify-between text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              <span>Quality</span>
+              <span className="font-mono normal-case">{quality}%</span>
+            </label>
+            <input
+              type="range"
+              min={1}
+              max={100}
+              value={quality}
+              onChange={(e) => setQuality(Number(e.target.value))}
+              className="w-full accent-primary"
+            />
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>Smallest</span>
+              <span>Best quality</span>
+            </div>
+          </div>
+
+          {/* Format */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Output format
+            </label>
+            <div className="flex gap-2">
+              {formats.map((f) => (
+                <button
+                  key={f}
+                  onClick={() => setFormat(f)}
+                  className={`rounded-lg border px-3 py-1 text-sm font-medium transition-colors ${
+                    format === f
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-border bg-background hover:bg-muted"
+                  }`}
+                >
+                  {f.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Action */}
+        <Button
+          onClick={process}
+          disabled={!file || isProcessing}
+          size="lg"
+          className="w-full"
+        >
+          {isProcessing ? "Processing…" : "Process image"}
+        </Button>
+
+        {/* Error */}
+        {error && (
+          <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {error}
+          </p>
+        )}
+
+        {/* Result */}
+        {result && (
+          <div className="flex flex-col gap-3 rounded-xl border border-border bg-muted/20 p-4">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">Result</span>
+              <span className="text-xs text-muted-foreground">{formatBytes(result.size)}</span>
+            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={result.url}
+              alt="processed"
+              className="max-h-64 w-full rounded-lg object-contain"
+            />
+            {imageInfo && (
+              <p className="text-xs text-muted-foreground">
+                {formatBytes(imageInfo.size)} → {formatBytes(result.size)}{" "}
+                <span className={result.size < imageInfo.size ? "text-green-500" : "text-amber-500"}>
+                  ({result.size < imageInfo.size ? "-" : "+"}
+                  {Math.abs(Math.round((1 - result.size / imageInfo.size) * 100))}%)
+                </span>
+              </p>
+            )}
+            <Button onClick={download} variant="outline" size="sm" className="self-start">
+              Download .{format}
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   )
