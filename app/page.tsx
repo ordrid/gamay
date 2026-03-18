@@ -17,6 +17,23 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
 }
 
+function detectFormat(file: File): OutputFormat {
+  const mime = file.type
+  if (mime === "image/png") return "png"
+  if (mime === "image/webp") return "webp"
+  if (mime === "image/avif") return "avif"
+  return "jpeg"
+}
+
+function stripExtension(name: string): string {
+  const i = name.lastIndexOf(".")
+  return i > 0 ? name.slice(0, i) : name
+}
+
+function defaultFilename(file: File, fmt: OutputFormat): string {
+  return `${stripExtension(file.name)}-processed.${fmt}`
+}
+
 export default function Page() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
@@ -25,6 +42,8 @@ export default function Page() {
   const [height, setHeight] = useState("")
   const [quality, setQuality] = useState(80)
   const [format, setFormat] = useState<OutputFormat>("jpeg")
+  const [outputFilename, setOutputFilename] = useState("")
+  const [filenameEdited, setFilenameEdited] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
   const [result, setResult] = useState<{ url: string; size: number; blob: Blob } | null>(null)
@@ -36,6 +55,10 @@ export default function Page() {
     setError(null)
     const url = URL.createObjectURL(f)
     setImageInfo({ name: f.name, size: f.size, previewUrl: url })
+    const detected = detectFormat(f)
+    setFormat(detected)
+    setOutputFilename(defaultFilename(f, detected))
+    setFilenameEdited(false)
   }, [])
 
   const onInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -87,11 +110,18 @@ export default function Page() {
     }
   }
 
+  const changeFormat = (f: OutputFormat) => {
+    setFormat(f)
+    if (!filenameEdited && file) {
+      setOutputFilename(defaultFilename(file, f))
+    }
+  }
+
   const download = () => {
     if (!result) return
     const a = document.createElement("a")
     a.href = result.url
-    a.download = `processed.${format}`
+    a.download = outputFilename || `processed.${format}`
     a.click()
   }
 
@@ -208,7 +238,7 @@ export default function Page() {
               {formats.map((f) => (
                 <button
                   key={f}
-                  onClick={() => setFormat(f)}
+                  onClick={() => changeFormat(f)}
                   className={`rounded-lg border px-3 py-1 text-sm font-medium transition-colors ${
                     format === f
                       ? "border-primary bg-primary text-primary-foreground"
@@ -219,6 +249,23 @@ export default function Page() {
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Filename */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Output filename
+            </label>
+            <input
+              type="text"
+              value={outputFilename}
+              onChange={(e) => {
+                setOutputFilename(e.target.value)
+                setFilenameEdited(true)
+              }}
+              placeholder={file ? defaultFilename(file, format) : "processed.jpeg"}
+              className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm outline-none placeholder:text-muted-foreground/50 focus:border-primary"
+            />
           </div>
         </div>
 
